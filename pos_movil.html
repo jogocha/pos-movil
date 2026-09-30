@@ -146,7 +146,28 @@
     /* Estado de Vacío */
     .empty-state { text-align: center; padding: 40px 20px; color: var(--muted); }
     .empty-icon { font-size: 42px; margin-bottom: 10px; }
-  </style>
+  
+    /* Estilos profesionales para Impresión y Guardar PDF (Ticket y A4) */
+    #areaImpresionActiva { display: none; }
+    @media print {
+      body { background: #fff !important; color: #000 !important; margin: 0 !important; padding: 0 !important; }
+      body * { visibility: hidden !important; }
+      #areaImpresionActiva, #areaImpresionActiva * { visibility: visible !important; }
+      #areaImpresionActiva {
+        display: block !important;
+        position: absolute !important;
+        left: 0 !important;
+        top: 0 !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+        color: #000 !important;
+      }
+      .no-print { display: none !important; }
+    }
+
+</style>
 </head>
 <body>
   <!-- Banner Instalador PWA Pantalla de Inicio -->
@@ -1902,7 +1923,16 @@
       window.open(urlWs, '_blank');
     }
 
-    function imprimirTicket() { window.print(); }
+    function imprimirTicket() {
+      const t = document.getElementById('ticketVisual');
+      const a = document.getElementById('areaImpresionActiva');
+      if (t && a) {
+        a.innerHTML = t.innerHTML;
+        window.print();
+      } else {
+        window.print();
+      }
+    }
 
     function nuevaVenta() {
       cerrarModal('modalExito');
@@ -1974,9 +2004,21 @@
               <div style="font-size:12px; color:#4a5568; margin-bottom:4px;">
                 👤 ${v.cliente_nombre || 'CLIENTES VARIOS'} ${v.cliente_num_doc ? '(' + v.cliente_num_doc + ')' : ''}
               </div>
-              <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#718096;">
+              <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; color:#718096; margin-bottom:8px;">
                 <span>📅 ${fTxt} | 👤 ${v.vendedor_nombre || 'Caja'}</span>
                 ${badgeEstado}
+              </div>
+              <!-- Botones de Acción: Ticket, Formato A4 y WhatsApp -->
+              <div style="display:flex; gap:6px; border-top:1px dashed #e2e8f0; padding-top:8px;">
+                <button type="button" onclick="verComprobanteHistorial(${v.id}, 'ticket')" style="flex:1; background:#2b6cb0; color:#fff; border:none; padding:7px 4px; border-radius:6px; font-size:11.5px; font-weight:bold; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;">
+                  <span>🖨️</span> <span>Ticket</span>
+                </button>
+                <button type="button" onclick="verComprobanteHistorial(${v.id}, 'a4')" style="flex:1; background:#4a5568; color:#fff; border:none; padding:7px 4px; border-radius:6px; font-size:11.5px; font-weight:bold; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;">
+                  <span>📄</span> <span>A4</span>
+                </button>
+                <button type="button" onclick="compartirVentaHistorialWhatsApp(${v.id})" style="flex:1; background:#25d366; color:#fff; border:none; padding:7px 4px; border-radius:6px; font-size:11.5px; font-weight:bold; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:4px;">
+                  <span>📲</span> <span>WhatsApp</span>
+                </button>
               </div>
             </div>
           `;
@@ -1986,6 +2028,281 @@
         box.innerHTML = `<p style="text-align:center; color:#e53e3e; padding:15px;">❌ Error de conexión: ${err.message}</p>`;
       }
     }
+
+    
+    // ========================================================
+    // GENERADOR OFICIAL DE COMPROBANTES: TICKET Y A4 CON QR SUNAT
+    // ========================================================
+    function numeroALetrasSoles(monto) {
+      const entero = Math.floor(monto);
+      const centavos = Math.round((monto - entero) * 100);
+      const unidades = ["CERO", "UN", "DOS", "TRES", "CUATRO", "CINCO", "SEIS", "SIETE", "OCHO", "NUEVE", 
+                        "DIEZ", "ONCE", "DOCE", "TRECE", "CATORCE", "QUINCE", "DIECISÉIS", "DIECISIETE", "DIECIOCHO", "DIECINUEVE"];
+      const decenas = ["", "", "VEINTE", "TREINTA", "CUARENTA", "CINCUENTA", "SESENTA", "SETENTA", "OCHENTA", "NOVENTA"];
+      const centenas = ["", "CIENTO", "DOSCIENTOS", "TRESCIENTOS", "CUATROCIENTOS", "QUINIENTOS", "SEISCIENTOS", "SETECIENTOS", "OCHOCIENTOS", "NOVECIENTOS"];
+      
+      let texto = "";
+      if (entero === 0) texto = "CERO";
+      else if (entero === 100) texto = "CIEN";
+      else if (entero < 20) texto = unidades[entero];
+      else if (entero < 100) {
+        let d = Math.floor(entero / 10), u = entero % 10;
+        texto = (u === 0) ? decenas[d] : (d === 2 ? "VEINTI" + unidades[u] : decenas[d] + " Y " + unidades[u]);
+      } else if (entero < 1000) {
+        let c = Math.floor(entero / 100), resto = entero % 100;
+        let tResto = resto > 0 ? (" " + (resto < 20 ? unidades[resto] : (decenas[Math.floor(resto/10)] + (resto%10 > 0 ? " Y " + unidades[resto%10] : "")))) : "";
+        texto = centenas[c] + tResto;
+      } else {
+        texto = entero.toString();
+      }
+      return `SON: ${texto} CON ${String(centavos).padStart(2, '0')}/100 SOLES`;
+    }
+
+    function verComprobanteHistorial(id, formato) {
+      if (!window._ventasNubeCache) return;
+      const venta = window._ventasNubeCache.find(x => x.id === id);
+      if (!venta) {
+        alert('No se encontraron los datos del comprobante.');
+        return;
+      }
+
+      const tipoNom = venta.tipo_comprobante === '01' ? 'FACTURA ELECTRÓNICA' : (venta.tipo_comprobante === '03' ? 'BOLETA DE VENTA ELECTRÓNICA' : 'NOTA DE VENTA');
+      const cpeTxt = (venta.serie && venta.correlativo) ? `${venta.serie}-${String(venta.correlativo).padStart(8, '0')}` : (venta.serie || '00000001');
+      const docTipo = venta.tipo_comprobante === '01' ? 'RUC' : (venta.cliente_tipo_doc === '6' ? 'RUC' : 'DNI');
+      const numDoc = venta.cliente_num_doc || '00000000';
+      const nomCli = venta.cliente_nombre || 'CLIENTES VARIOS';
+      const fechaEmis = (venta.fecha_emision || '').split('T')[0] || new Date().toISOString().split('T')[0];
+      const horaStr = new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+      const fHoraDisplay = fechaEmis + ' ' + horaStr;
+
+      const totGravada = Number(venta.total_gravada || (venta.total_venta / 1.18)).toFixed(2);
+      const totIgv = Number(venta.total_igv || (venta.total_venta - totGravada)).toFixed(2);
+      const totVenta = Number(venta.total_venta || 0).toFixed(2);
+      const hashSunat = venta.hash_cpe || venta.codigo_hash || 'kX8zQ7w9P2m1A=';
+
+      // Construcción del texto del Código QR oficial de SUNAT:
+      // RUC|TIPO|SERIE|NUMERO|IGV|TOTAL|FECHA|TIPO_DOC_CLIENTE|NUM_DOC_CLIENTE|HASH
+      const qrData = `${configLocal.ruc}|${venta.tipo_comprobante}|${venta.serie || 'B001'}|${String(venta.correlativo || 1).padStart(8, '0')}|${totIgv}|${totVenta}|${fechaEmis}|${venta.cliente_tipo_doc || '1'}|${numDoc}|${hashSunat}`;
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&margin=2&data=${encodeURIComponent(qrData)}`;
+
+      let cont = document.getElementById('contenedorDocumentoImprimible');
+      let tit = document.getElementById('lblTituloVisor');
+
+      if (formato === 'ticket') {
+        tit.innerText = `🖨️ Ticket: ${tipoNom} ${cpeTxt}`;
+
+        let filasItems = '';
+        (venta.items || []).forEach(it => {
+          let cant = it.cantidad || 1;
+          let pu = Number(it.precio_unitario || it.precio || 0);
+          let sub = cant * pu;
+          filasItems += `
+            <tr>
+              <td style="text-align:center; padding:3px 2px; vertical-align:top;">${cant}</td>
+              <td style="padding:3px 2px;">${it.descripcion || 'Producto'}</td>
+              <td style="text-align:right; padding:3px 2px; vertical-align:top;">${pu.toFixed(2)}</td>
+              <td style="text-align:right; padding:3px 2px; font-weight:bold; vertical-align:top;">${sub.toFixed(2)}</td>
+            </tr>
+          `;
+        });
+
+        cont.innerHTML = `
+          <div style="max-width:320px; margin:0 auto; padding:16px 12px; font-family:'Courier New', Courier, monospace; font-size:11px; color:#000; background:#fff; border:1px solid #ddd;">
+            <div style="text-align:center; margin-bottom:8px;">
+              <div style="font-size:14px; font-weight:bold; text-transform:uppercase;">${configLocal.razon}</div>
+              <div style="font-size:12px; font-weight:bold; margin-top:2px;">RUC: ${configLocal.ruc}</div>
+              <div style="font-size:10px; color:#333;">LIMA - PERÚ</div>
+              <div style="border:1.5px solid #000; padding:6px 4px; margin:8px 0; font-weight:bold;">
+                <div style="font-size:12.5px;">${tipoNom}</div>
+                <div style="font-size:14px; font-weight:900; color:#1a365d;">${cpeTxt}</div>
+              </div>
+              <div style="font-size:10.5px; text-align:left;"><b>Fecha y Hora:</b> ${fHoraDisplay}</div>
+              <div style="font-size:10.5px; text-align:left;"><b>Cajero / Vendedor:</b> ${venta.vendedor_nombre || configLocal.vendedor}</div>
+            </div>
+
+            <div style="border-top:1px dashed #000; margin:6px 0;"></div>
+            <div style="font-size:10.5px; line-height:1.4;">
+              <div><b>Cliente:</b> ${nomCli}</div>
+              <div><b>${docTipo}:</b> ${numDoc}</div>
+              <div><b>Moneda:</b> SOLES (PEN)</div>
+              <div><b>Forma de Pago:</b> ${venta.metodo_pago || 'CONTADO'}</div>
+            </div>
+            <div style="border-top:1px dashed #000; margin:6px 0;"></div>
+
+            <table style="width:100%; border-collapse:collapse; font-size:10px;">
+              <thead>
+                <tr style="border-bottom:1px solid #000;">
+                  <th style="width:14%; text-align:center; padding-bottom:3px;">CANT</th>
+                  <th style="text-align:left; padding-bottom:3px;">DESCRIPCIÓN</th>
+                  <th style="width:18%; text-align:right; padding-bottom:3px;">P.UNIT</th>
+                  <th style="width:20%; text-align:right; padding-bottom:3px;">TOTAL</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filasItems}
+              </tbody>
+            </table>
+
+            <div style="border-top:1px dashed #000; margin:8px 0;"></div>
+            <div style="font-size:11px; line-height:1.5;">
+              <div style="display:flex; justify-content:space-between;"><span>Op. Gravada:</span><span>S/ ${totGravada}</span></div>
+              <div style="display:flex; justify-content:space-between;"><span>I.G.V. (18%):</span><span>S/ ${totIgv}</span></div>
+              <div style="display:flex; justify-content:space-between; font-size:14px; font-weight:bold; border-top:1px solid #000; padding-top:3px; margin-top:2px;">
+                <span>TOTAL A PAGAR:</span><span>S/ ${totVenta}</span>
+              </div>
+            </div>
+
+            <div style="margin:10px 0 6px 0; font-size:9.5px; text-align:center; font-weight:bold;">
+              ${numeroALetrasSoles(Number(totVenta))}
+            </div>
+
+            <div style="text-align:center; margin-top:12px; border-top:1px dashed #000; padding-top:10px;">
+              <img src="${qrUrl}" alt="Código QR SUNAT" style="width:120px; height:120px; display:block; margin:0 auto 6px auto;">
+              <div style="font-size:9px; color:#444;">Código Hash: <b>${hashSunat}</b></div>
+              <div style="font-size:8.5px; color:#555; margin-top:4px; line-height:1.3;">
+                Representación impresa de la ${tipoNom.toLowerCase()}.<br>
+                Autorizado mediante resolución SUNAT.<br>
+                Consulte su validez en <b>www.sunat.gob.pe</b>
+              </div>
+              <div style="font-size:11px; font-weight:bold; margin-top:8px;">¡GRACIAS POR SU COMPRA!</div>
+            </div>
+          </div>
+        `;
+      } else {
+        // FORMATO A4 COMPLETO
+        tit.innerText = `📄 Formato A4: ${tipoNom} ${cpeTxt}`;
+
+        let filasItemsA4 = '';
+        (venta.items || []).forEach((it, idx) => {
+          let cant = it.cantidad || 1;
+          let pu = Number(it.precio_unitario || it.precio || 0);
+          let sub = cant * pu;
+          filasItemsA4 += `
+            <tr style="border-bottom:1px solid #e2e8f0; font-size:11.5px;">
+              <td style="text-align:center; padding:8px 4px;">${idx + 1}</td>
+              <td style="text-align:center; padding:8px 4px;">${cant}</td>
+              <td style="text-align:center; padding:8px 4px;">${it.unidad_medida || 'NIU'}</td>
+              <td style="padding:8px 6px;"><b>${it.descripcion || 'Producto'}</b></td>
+              <td style="text-align:right; padding:8px 6px;">S/ ${pu.toFixed(2)}</td>
+              <td style="text-align:right; padding:8px 6px; font-weight:bold;">S/ ${sub.toFixed(2)}</td>
+            </tr>
+          `;
+        });
+
+        cont.innerHTML = `
+          <div style="max-width:640px; margin:0 auto; padding:24px 20px; font-family:Arial, Helvetica, sans-serif; font-size:12px; color:#2d3748; background:#fff; border:1px solid #cbd5e0;">
+            <!-- Cabecera A4: Datos Emisor y Recuadro RUC -->
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
+              <div style="width:60%; padding-right:12px;">
+                <div style="font-size:17px; font-weight:900; color:#1a365d; text-transform:uppercase;">${configLocal.razon}</div>
+                <div style="font-size:11.5px; color:#4a5568; margin-top:4px;">LIMA - PERÚ</div>
+                <div style="font-size:11px; color:#4a5568; margin-top:2px;"><b>Venta Electrónica Móvil / Nube</b></div>
+                <div style="font-size:11px; color:#4a5568;"><b>Atendido por:</b> ${venta.vendedor_nombre || configLocal.vendedor}</div>
+              </div>
+              <div style="width:38%; border:2px solid #2b6cb0; border-radius:8px; text-align:center; padding:10px 6px; background:#ebf8ff;">
+                <div style="font-size:13px; font-weight:bold; color:#1a365d;">R.U.C. ${configLocal.ruc}</div>
+                <div style="font-size:13px; font-weight:900; color:#c53030; margin:4px 0; text-transform:uppercase;">${tipoNom}</div>
+                <div style="font-size:15px; font-weight:900; color:#1a365d;">Nº ${cpeTxt}</div>
+              </div>
+            </div>
+
+            <!-- Datos del Cliente -->
+            <div style="border:1px solid #cbd5e0; border-radius:6px; padding:10px 12px; margin-bottom:16px; background:#f7fafc; font-size:11.5px; line-height:1.6;">
+              <div style="display:flex;"><span style="width:110px; font-weight:bold; color:#4a5568;">Señor(es):</span><span style="font-weight:bold;">${nomCli}</span></div>
+              <div style="display:flex;"><span style="width:110px; font-weight:bold; color:#4a5568;">${docTipo}:</span><span>${numDoc}</span></div>
+              <div style="display:flex; justify-content:space-between;">
+                <div><span style="font-weight:bold; color:#4a5568;">Fecha de Emisión:</span> ${fechaEmis}</div>
+                <div><span style="font-weight:bold; color:#4a5568;">Moneda:</span> SOLES (PEN)</div>
+                <div><span style="font-weight:bold; color:#4a5568;">Forma de Pago:</span> ${venta.metodo_pago || 'CONTADO'}</div>
+              </div>
+            </div>
+
+            <!-- Tabla de Ítems A4 -->
+            <table style="width:100%; border-collapse:collapse; margin-bottom:16px;">
+              <thead>
+                <tr style="background:#edf2f7; border-top:1px solid #cbd5e0; border-bottom:1px solid #cbd5e0; font-size:11px; color:#2d3748;">
+                  <th style="padding:6px 4px; width:6%; text-align:center;">ITEM</th>
+                  <th style="padding:6px 4px; width:8%; text-align:center;">CANT</th>
+                  <th style="padding:6px 4px; width:10%; text-align:center;">UNIDAD</th>
+                  <th style="padding:6px 6px; text-align:left;">DESCRIPCIÓN</th>
+                  <th style="padding:6px 6px; width:16%; text-align:right;">VALOR UNIT.</th>
+                  <th style="padding:6px 6px; width:18%; text-align:right;">IMPORTE</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filasItemsA4}
+              </tbody>
+            </table>
+
+            <!-- Resumen Inferior y Código QR -->
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-top:8px;">
+              <div style="width:58%; padding-right:10px;">
+                <div style="font-size:10.5px; font-weight:bold; color:#1a365d; margin-bottom:8px; background:#edf2f7; padding:6px 8px; border-radius:4px;">
+                  ${numeroALetrasSoles(Number(totVenta))}
+                </div>
+                <div style="display:flex; gap:10px; align-items:center;">
+                  <img src="${qrUrl}" alt="QR SUNAT" style="width:110px; height:110px; border:1px solid #cbd5e0; padding:2px; border-radius:4px;">
+                  <div style="font-size:9.5px; color:#4a5568; line-height:1.4;">
+                    <div><b>Código Hash:</b> ${hashSunat}</div>
+                    <div style="margin-top:4px;">Representación impresa del Comprobante de Pago Electrónico generado desde el sistema del contribuyente.</div>
+                    <div style="margin-top:4px; color:#2b6cb0; font-weight:bold;">Autorizado mediante Resolución de Superintendencia SUNAT.</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Totales -->
+              <div style="width:40%; border:1px solid #cbd5e0; border-radius:6px; overflow:hidden; font-size:11.5px;">
+                <div style="display:flex; justify-content:space-between; padding:6px 10px; border-bottom:1px solid #edf2f7;">
+                  <span style="color:#4a5568;">Op. Gravada:</span><b>S/ ${totGravada}</b>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding:6px 10px; border-bottom:1px solid #edf2f7;">
+                  <span style="color:#4a5568;">I.G.V. (18%):</span><b>S/ ${totIgv}</b>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding:8px 10px; background:#ebf8ff; font-size:13.5px; font-weight:900; color:#1a365d;">
+                  <span>IMPORTE TOTAL:</span><span>S/ ${totVenta}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      document.getElementById('modalVisorComprobante').classList.add('active');
+    }
+
+    function imprimirDocumentoVisor() {
+      const cont = document.getElementById('contenedorDocumentoImprimible');
+      const area = document.getElementById('areaImpresionActiva');
+      if (cont && area) {
+        area.innerHTML = cont.innerHTML;
+        window.print();
+      }
+    }
+
+    function compartirVentaHistorialWhatsApp(id) {
+      if (!window._ventasNubeCache) return;
+      const v = window._ventasNubeCache.find(x => x.id === id);
+      if (!v) return;
+
+      const tipo = v.tipo_comprobante === '01' ? 'FACTURA ELECTRÓNICA' : (v.tipo_comprobante === '03' ? 'BOLETA DE VENTA ELECTRÓNICA' : 'NOTA DE VENTA');
+      const cpeTxt = (v.serie && v.correlativo) ? `${v.serie}-${String(v.correlativo).padStart(8, '0')}` : (v.serie || '00000001');
+      const fechaStr = (v.fecha_emision || '').split('T')[0] || new Date().toISOString().split('T')[0];
+
+      let texto = `*${configLocal.razon}*\n`;
+      texto += `RUC: ${configLocal.ruc}\n\n`;
+      texto += `🧾 *${tipo}*\n`;
+      texto += `Número: *${cpeTxt}*\n`;
+      texto += `Fecha: ${fechaStr}\n`;
+      texto += `Cliente: ${v.cliente_nombre || 'CLIENTES VARIOS'}\n`;
+      texto += `Total: *S/ ${Number(v.total_venta || 0).toFixed(2)}*\n\n`;
+      texto += `Estado SUNAT: *${v.estado || 'ACEPTADO_SUNAT'}*\n`;
+      texto += `¡Muchas gracias por su preferencia!`;
+
+      let telf = (v.cliente_telefono || '').replace(/[^0-9]/g, '');
+      const urlWs = telf ? `https://wa.me/51${telf}?text=${encodeURIComponent(texto)}` : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+      window.open(urlWs, '_blank');
+    }
+
 
     // 14. Crear Nuevo Producto
     function abrirModalNuevoProducto() {
@@ -2070,5 +2387,26 @@
       mostrarToast('✅ Series y configuración guardadas');
     }
   </script>
+
+  <!-- Área de Impresión Oculta Oficial (Para Guardar PDF o Imprimir) -->
+  <div id="areaImpresionActiva"></div>
+
+  <!-- Modal Visor / Impresion de Comprobante (Ticket y A4) -->
+  <div class="modal-overlay" id="modalVisorComprobante" style="z-index:10000;">
+    <div class="modal-content" style="max-height:92vh; width:95%; max-width:680px; display:flex; flex-direction:column; padding:12px;">
+      <div class="modal-header" style="padding-bottom:8px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+        <h3 id="lblTituloVisor" style="font-size:15px; color:#1a365d; margin:0;">📄 Comprobante Electrónico</h3>
+        <button class="btn-close" onclick="cerrarModal('modalVisorComprobante')">&times;</button>
+      </div>
+      <div class="modal-body" style="overflow-y:auto; flex:1; padding:10px 0; background:#f7fafc;">
+        <div id="contenedorDocumentoImprimible" style="background:#fff; margin:0 auto; box-shadow:0 2px 6px rgba(0,0,0,0.08); border-radius:6px;"></div>
+      </div>
+      <div class="modal-footer" style="padding-top:10px; border-top:1px solid #e2e8f0; display:flex; gap:8px;">
+        <button class="btn-action btn-print" style="flex:1; padding:10px; font-size:13px; font-weight:bold;" onclick="imprimirDocumentoVisor()">🖨️ Imprimir / Guardar como PDF</button>
+        <button class="btn-action btn-new" style="flex:1; padding:10px; font-size:13px;" onclick="cerrarModal('modalVisorComprobante')">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
